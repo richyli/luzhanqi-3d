@@ -14,6 +14,7 @@ const state = {
   meshes: new Map(),         // pieceId -> THREE.Group
   labels: new Map(),
   selected: null,
+  selectedMoves: null,
   swapSel: null,
   markers: [],
   busy: false,
@@ -156,7 +157,7 @@ function newGame() {
   state.board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   state.meshes.forEach(m => pieceLayer.remove(m));
   state.meshes.clear(); state.labels.clear();
-  clearMarkers(); state.selected = null; state.swapSel = null;
+  clearMarkers(); state.selected = null; state.selectedMoves = null; state.swapSel = null;
   state.phase = 'setup'; state.turn = 'US'; state.busy = false;
   $('lostUS').innerHTML = ''; $('lostCN').innerHTML = '';
   $('overlay').classList.add('hidden');
@@ -210,9 +211,12 @@ function showMarkers(piece, moves) {
     const w = worldPos(mv.r, mv.c);
     let m;
     if (mv.attack) {
-      m = new THREE.Mesh(new THREE.TorusGeometry(3.0, 0.32, 8, 28),
+      m = new THREE.Mesh(new THREE.CylinderGeometry(3.3, 3.3, 0.22, 24),
+        new THREE.MeshBasicMaterial({ color: 0xff4433, transparent: true, opacity: 0.3 }));
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(3.0, 0.32, 8, 28),
         new THREE.MeshBasicMaterial({ color: 0xff4433, transparent: true, opacity: 0.9 }));
-      m.rotation.x = Math.PI / 2;
+      ring.rotation.x = Math.PI / 2; ring.position.y = 0.15;
+      m.add(ring);
     } else {
       m = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 0.25, 22),
         new THREE.MeshBasicMaterial({ color: 0x39d353, transparent: true, opacity: 0.62 }));
@@ -276,8 +280,12 @@ function pickAt(e) {
     ((e.clientX - rect.left) / rect.width) * 2 - 1,
     -((e.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(nd, camera);
-  const hitM = raycaster.intersectObjects(markerLayer.children, false);
-  if (hitM.length) return { marker: hitM[0].object.userData.marker };
+  const hitM = raycaster.intersectObjects(markerLayer.children, true);
+  for (const h of hitM) {
+    let o = h.object;
+    while (o && !o.userData.marker) o = o.parent;
+    if (o) return { marker: o.userData.marker };
+  }
   const hitP = raycaster.intersectObjects(pieceLayer.children, true);
   for (const h of hitP) {
     let o = h.object;
@@ -307,16 +315,22 @@ function handleClick(e) {
   // play
   if (state.turn !== 'US') return;
   if (hit.marker) { doMove(hit.marker.piece, hit.marker.mv); return; }
+  // 直接點敵方棋子＝攻擊（若在已選單位的合法攻擊範圍內）
+  if (hit.piece && hit.piece.side === 'CN' && state.selected && state.selectedMoves) {
+    const mv = state.selectedMoves.find(m => m.attack && m.r === hit.piece.r && m.c === hit.piece.c);
+    if (mv) { doMove(state.selected, mv); return; }
+  }
   if (hit.piece && hit.piece.side === 'US') {
     setSelected(hit.piece);
     const moves = legalMoves(hit.piece, state.board);
+    state.selectedMoves = moves;
     showMarkers(hit.piece, moves);
     if (hit.piece.immobile) setMsg('<b>' + hit.piece.role + '・' + hit.piece.name + '</b>：' + hit.piece.desc + '（不可移動）');
     else if (isHQ(hit.piece.r, hit.piece.c)) setMsg('大本營內的單位不得再移動。');
     else setMsg('<b>' + hit.piece.role + '・' + hit.piece.name + '</b>：' + hit.piece.desc +
       '。綠點＝可走，紅圈＝攻擊。');
   } else {
-    setSelected(null); clearMarkers();
+    setSelected(null); clearMarkers(); state.selectedMoves = null;
   }
 }
 
@@ -349,7 +363,7 @@ function trySwap(a, b) {
 /* ---------- 執行移動 ---------- */
 function doMove(piece, mv) {
   state.busy = true;
-  clearMarkers(); setSelected(null);
+  clearMarkers(); setSelected(null); state.selectedMoves = null;
   const g = state.meshes.get(piece.id);
   const defender = mv.attack ? state.board[mv.r][mv.c] : null;
 
